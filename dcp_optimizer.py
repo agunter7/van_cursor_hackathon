@@ -1000,6 +1000,13 @@ class DCPOptimizer(DCPOptimizerBase):
             print(f"\n✗ Initial analysis failed: {e}\n")
             self.end_time = time.time()
             return False
+
+        # Get initial fmax
+        initial_fmax = self.calculate_fmax(self.initial_wns, self.clock_period)
+        if initial_fmax is not None:
+            print(f"Achievable fmax: {initial_fmax:.2f} MHz")
+        else:
+            print(f"Achievable fmax: Not Available")
         
         # Check if timing is already met
         if self.initial_wns is not None and self.initial_wns >= 0:
@@ -1019,9 +1026,6 @@ class DCPOptimizer(DCPOptimizerBase):
             # Print summary even for early exit
             print("\n=== No Optimization Required ===")
             print(f"Design already meets timing (WNS: {self.initial_wns:.3f} ns)")
-            initial_fmax = self.calculate_fmax(self.initial_wns, self.clock_period)
-            if initial_fmax is not None:
-                print(f"Achievable fmax: {initial_fmax:.2f} MHz")
             print(f"Total runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
             print(f"LLM API calls: 0 (analysis performed without LLM)")
             print(f"Estimated cost: $0.00")
