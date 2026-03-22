@@ -350,94 +350,96 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     try:
         logger.info(f"Tool called: {name} with arguments: {arguments}")
         
-        # Route to appropriate handler
-        if name == "initialize_rapidwright":
-            result = rw.initialize_rapidwright(
-                jvm_max_memory=arguments.get("jvm_max_memory", "4G")
-            )
-        
-        elif name == "get_supported_devices":
-            result = rw.get_supported_devices()
-        
-        elif name == "get_device_info":
-            result = rw.get_device_info(arguments["device_name"])
-        
-        elif name == "read_checkpoint":
-            result = rw.read_checkpoint(arguments["dcp_path"])
-        
-        elif name == "write_checkpoint":
-            result = rw.write_checkpoint(
-                dcp_path=arguments["dcp_path"],
-                overwrite=arguments.get("overwrite", False)
-            )
-        
-        elif name == "get_design_info":
-            result = rw.get_design_info()
-        
-        elif name == "search_cells":
-            result = rw.search_cells(
-                pattern=arguments.get("pattern"),
-                cell_type=arguments.get("cell_type"),
-                limit=arguments.get("limit", 100)
-            )
-        
-        elif name == "get_tile_info":
-            result = rw.get_tile_info(
-                tile_name=arguments["tile_name"],
-                device_name=arguments.get("device_name")
-            )
-        
-        elif name == "search_sites":
-            result = rw.search_sites(
-                site_type=arguments.get("site_type"),
-                device_name=arguments.get("device_name"),
-                limit=arguments.get("limit", 50)
-            )
-        
-        elif name == "optimize_lut_input_cone":
-            result = rw.optimize_lut_input_cone(
-                hierarchical_input_pins=arguments["hierarchical_input_pins"]
-            )
-        
-        elif name == "optimize_fanout":
-            result = rw.optimize_fanout(
-                net_name=arguments["net_name"],
-                split_factor=arguments["split_factor"]
-            )
-        
-        elif name == "analyze_critical_path_spread":
-            result = rw.analyze_critical_path_spread(
-                critical_paths_data=arguments.get("critical_paths_data"),
-                input_file=arguments.get("input_file")
-            )
-        
-        elif name == "analyze_fabric_for_pblock":
-            result = rw.analyze_fabric_for_pblock(
-                target_lut_count=arguments["target_lut_count"],
-                target_ff_count=arguments["target_ff_count"],
-                target_dsp_count=arguments.get("target_dsp_count", 0),
-                target_bram_count=arguments.get("target_bram_count", 0),
-                device_name=arguments.get("device_name")
-            )
-        
-        elif name == "convert_fabric_region_to_pblock":
-            result = rw.convert_fabric_region_to_pblock_ranges(
-                col_min=arguments["col_min"],
-                col_max=arguments["col_max"],
-                row_min=arguments["row_min"],
-                row_max=arguments["row_max"],
-                device_name=arguments.get("device_name"),
-                use_clock_regions=arguments.get("use_clock_regions", False)  # Default to detailed site ranges
-            )
-        
-        elif name == "compare_design_structure":
-            result = rw.compare_design_structure(
-                golden_dcp=arguments["golden_dcp"],
-                revised_dcp=arguments["revised_dcp"]
-            )
-        
-        else:
-            result = {"error": f"Unknown tool: {name}"}
+        # Serialize JVM/JPype work — overlapping tool calls corrupt RapidWright state
+        with rw.RAPIDWRIGHT_TOOL_LOCK:
+            # Route to appropriate handler
+            if name == "initialize_rapidwright":
+                result = rw.initialize_rapidwright(
+                    jvm_max_memory=arguments.get("jvm_max_memory", "4G")
+                )
+            
+            elif name == "get_supported_devices":
+                result = rw.get_supported_devices()
+            
+            elif name == "get_device_info":
+                result = rw.get_device_info(arguments["device_name"])
+            
+            elif name == "read_checkpoint":
+                result = rw.read_checkpoint(arguments["dcp_path"])
+            
+            elif name == "write_checkpoint":
+                result = rw.write_checkpoint(
+                    dcp_path=arguments["dcp_path"],
+                    overwrite=arguments.get("overwrite", False)
+                )
+            
+            elif name == "get_design_info":
+                result = rw.get_design_info()
+            
+            elif name == "search_cells":
+                result = rw.search_cells(
+                    pattern=arguments.get("pattern"),
+                    cell_type=arguments.get("cell_type"),
+                    limit=arguments.get("limit", 100)
+                )
+            
+            elif name == "get_tile_info":
+                result = rw.get_tile_info(
+                    tile_name=arguments["tile_name"],
+                    device_name=arguments.get("device_name")
+                )
+            
+            elif name == "search_sites":
+                result = rw.search_sites(
+                    site_type=arguments.get("site_type"),
+                    device_name=arguments.get("device_name"),
+                    limit=arguments.get("limit", 50)
+                )
+            
+            elif name == "optimize_lut_input_cone":
+                result = rw.optimize_lut_input_cone(
+                    hierarchical_input_pins=arguments["hierarchical_input_pins"]
+                )
+            
+            elif name == "optimize_fanout":
+                result = rw.optimize_fanout(
+                    net_name=arguments["net_name"],
+                    split_factor=arguments["split_factor"]
+                )
+            
+            elif name == "analyze_critical_path_spread":
+                result = rw.analyze_critical_path_spread(
+                    critical_paths_data=arguments.get("critical_paths_data"),
+                    input_file=arguments.get("input_file")
+                )
+            
+            elif name == "analyze_fabric_for_pblock":
+                result = rw.analyze_fabric_for_pblock(
+                    target_lut_count=arguments["target_lut_count"],
+                    target_ff_count=arguments["target_ff_count"],
+                    target_dsp_count=arguments.get("target_dsp_count", 0),
+                    target_bram_count=arguments.get("target_bram_count", 0),
+                    device_name=arguments.get("device_name")
+                )
+            
+            elif name == "convert_fabric_region_to_pblock":
+                result = rw.convert_fabric_region_to_pblock_ranges(
+                    col_min=arguments["col_min"],
+                    col_max=arguments["col_max"],
+                    row_min=arguments["row_min"],
+                    row_max=arguments["row_max"],
+                    device_name=arguments.get("device_name"),
+                    use_clock_regions=arguments.get("use_clock_regions", False)  # Default to detailed site ranges
+                )
+            
+            elif name == "compare_design_structure":
+                result = rw.compare_design_structure(
+                    golden_dcp=arguments["golden_dcp"],
+                    revised_dcp=arguments["revised_dcp"]
+                )
+            
+            else:
+                result = {"error": f"Unknown tool: {name}"}
         
         # Return formatted result
         return [TextContent(type="text", text=json.dumps(result, indent=2))]

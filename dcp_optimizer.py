@@ -94,6 +94,22 @@ def parse_timing_summary_static(timing_report: str) -> dict:
     return result
 
 
+def rapidwright_tool_result_ok(result_text: str) -> bool:
+    """
+    Parse RapidWright MCP JSON tool output.
+    Avoids substring heuristics like '\"error\" in text' that misfire on nested strings.
+    """
+    try:
+        obj = json.loads(result_text)
+        if not isinstance(obj, dict):
+            return False
+        if obj.get("error") is not None:
+            return False
+        return obj.get("status") in ("success", "already_initialized")
+    except json.JSONDecodeError:
+        return False
+
+
 def load_system_prompt(prompt_file: str) -> str:
     """Load prompt from PROMPTS/<file>"""
     script_dir = Path(__file__).parent.resolve()
@@ -733,7 +749,7 @@ class DCPOptimizer(DCPOptimizerBase):
         logger.info("Initializing RapidWright...")
         print("Initializing RapidWright...")
         result = await self.call_tool("rapidwright_initialize_rapidwright", {})
-        if "error" in result.lower() and "success" not in result.lower():
+        if not rapidwright_tool_result_ok(result):
             raise RuntimeError(f"Failed to initialize RapidWright: {result}")
         print("✓ RapidWright initialized\n")
         
@@ -798,7 +814,7 @@ class DCPOptimizer(DCPOptimizerBase):
         result = await self.call_tool("rapidwright_read_checkpoint", {
             "dcp_path": str(input_dcp.resolve())
         })
-        if "error" in result.lower() and "success" not in result.lower():
+        if not rapidwright_tool_result_ok(result):
             print(f"⚠ Warning: Could not load design in RapidWright: {result}")
         else:
             print("✓ Design loaded in RapidWright\n")

@@ -7,6 +7,7 @@ RapidWright Tools - Wrapper functions for RapidWright operations
 Uses the rapidwright pip package which handles JPype integration internally
 """
 import logging
+import threading
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,30 @@ logger = logging.getLogger(__name__)
 # Global state
 _initialized = False
 _current_design = None
+# Filled on successful init; used to answer already_initialized without touching JPype
+_init_snapshot: Optional[Dict[str, Any]] = None
+
+# JPype/JVM is not reliably re-entrant across overlapping tool calls
+RAPIDWRIGHT_TOOL_LOCK = threading.Lock()
+
+
+def _ensure_rapidwright_initialized(jvm_max_memory: str = "4G") -> Optional[Dict[str, Any]]:
+    """
+    Ensure the JVM/RapidWright stack is up before any tool runs.
+
+    Some clients call read_checkpoint or optimize_fanout in an order or process state
+    where the module flag is not yet set; lazily initializing here avoids spurious
+    \"not initialized\" failures while keeping initialize_rapidwright as the explicit API.
+    """
+    if _initialized:
+        return None
+    logger.warning(
+        "RapidWright was not initialized before this tool call; initializing now (lazy init)"
+    )
+    result = initialize_rapidwright(jvm_max_memory=jvm_max_memory)
+    if result.get("status") == "error":
+        return result
+    return None
 
 
 def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
@@ -26,10 +51,17 @@ def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
     Returns:
         Dictionary with initialization status, version, and install path
     """
-    global _initialized
+    global _initialized, _init_snapshot
     
     if _initialized:
-        # Return version and path info even when already initialized
+        # Prefer cached metadata so we never poke a crashed JVM from this path
+        if _init_snapshot:
+            result = {
+                "status": "already_initialized",
+                "message": "RapidWright already initialized",
+                **_init_snapshot,
+            }
+            return result
         try:
             import rapidwright
             import os
@@ -42,9 +74,10 @@ def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
             version = 'unknown'
             install_path = 'unknown'
             rapidwright_path_env = None
+            classpath = None
         
         result = {
-            "status": "already_initialized", 
+            "status": "already_initialized",
             "message": "RapidWright already initialized",
             "rapidwright_version": version,
             "rapidwright_install_path": install_path
@@ -61,8 +94,6 @@ def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
         import os
         from com.xilinx.rapidwright.device import Device
         
-        _initialized = True
-        
         logger.info("RapidWright initialized successfully")
         
         # Test that we can access basic functionality
@@ -74,21 +105,29 @@ def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
         rapidwright_path_env = os.environ.get('RAPIDWRIGHT_PATH')
         classpath = os.environ.get('CLASSPATH')
 
+        _init_snapshot = {
+            "rapidwright_version": version,
+            "rapidwright_install_path": install_path,
+            "available_devices": device_count,
+        }
+        if rapidwright_path_env:
+            _init_snapshot["RAPIDWRIGHT_PATH"] = rapidwright_path_env
+        if classpath:
+            _init_snapshot["CLASSPATH"] = classpath
+
+        _initialized = True
+
         result = {
             "status": "success",
             "message": "RapidWright initialized successfully",
-            "rapidwright_version": version,
-            "rapidwright_install_path": install_path,
-            "available_devices": device_count
+            **_init_snapshot,
         }
-        if rapidwright_path_env:
-            result["RAPIDWRIGHT_PATH"] = rapidwright_path_env
-        if classpath:
-            result["CLASSPATH"] = classpath            
         return result
         
     except Exception as e:
         logger.error(f"Failed to initialize RapidWright: {e}")
+        _initialized = False
+        _init_snapshot = None
         return {
             "status": "error",
             "message": f"Failed to initialize RapidWright: {str(e)}",
@@ -103,8 +142,9 @@ def get_supported_devices() -> Dict[str, Any]:
     Returns:
         Dictionary with devices organized as a tree: Series -> FamilyType -> Devices
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import PartNameTools
@@ -169,8 +209,9 @@ def get_device_info(device_name: str) -> Dict[str, Any]:
     Returns:
         Dictionary with device information
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import Device
@@ -208,8 +249,9 @@ def read_checkpoint(dcp_path: str) -> Dict[str, Any]:
     """
     global _current_design
     
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.design import Design
@@ -250,8 +292,9 @@ def write_checkpoint(dcp_path: str, overwrite: bool = False) -> Dict[str, Any]:
     Returns:
         Dictionary with save status, bytes written, and encrypted IP info
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
         return {"error": "No design loaded. Use read_checkpoint first."}
@@ -328,11 +371,12 @@ def get_design_info() -> Dict[str, Any]:
     Returns:
         Dictionary with design statistics
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
-        return {"error": "No design loaded. Use load_design first."}
+        return {"error": "No design loaded. Call read_checkpoint first to load a DCP."}
     
     try:
         design = _current_design
@@ -376,11 +420,12 @@ def search_cells(pattern: Optional[str] = None,
     Returns:
         Dictionary with matching cells
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
-        return {"error": "No design loaded. Use load_design first."}
+        return {"error": "No design loaded. Call read_checkpoint first to load a DCP."}
     
     try:
         design = _current_design
@@ -436,8 +481,9 @@ def get_tile_info(tile_name: str, device_name: Optional[str] = None) -> Dict[str
     Returns:
         Dictionary with tile information
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import Device
@@ -492,8 +538,9 @@ def search_sites(site_type: Optional[str] = None,
     Returns:
         Dictionary with matching sites
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import Device
@@ -552,11 +599,12 @@ def optimize_lut_input_cone(hierarchical_input_pins: list[str]) -> Dict[str, Any
     Returns:
         Dictionary with optimization results
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
-        return {"error": "No design loaded. Use load_design first."}
+        return {"error": "No design loaded. Call read_checkpoint first to load a DCP."}
     
     try:
         from com.xilinx.rapidwright.eco import LUTInputConeOpt
@@ -645,11 +693,12 @@ def optimize_fanout(net_name: str, split_factor: int) -> Dict[str, Any]:
     Returns:
         Dictionary with optimization results
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
-        return {"error": "No design loaded. Use load_design first."}
+        return {"error": "No design loaded. Call read_checkpoint first to load a DCP."}
     
     try:
         from com.xilinx.rapidwright.eco import FanOutOptimization
@@ -723,8 +772,9 @@ def analyze_fabric_for_pblock(
     Returns:
         Dictionary with recommended pblock ranges and analysis
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import Device, TileTypeEnum
@@ -1049,8 +1099,9 @@ def analyze_critical_path_spread(
         
     Note: Either critical_paths_data or input_file must be provided
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     if _current_design is None:
         return {"error": "No design loaded. Use read_checkpoint first."}
@@ -1170,8 +1221,9 @@ def compare_design_structure(golden_dcp: str, revised_dcp: str) -> Dict[str, Any
     Returns:
         Dictionary with comparison results including pass/fail status
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.design import Design
@@ -1372,8 +1424,9 @@ def convert_fabric_region_to_pblock_ranges(
     Returns:
         Dictionary with pblock range strings suitable for Vivado create_pblock
     """
-    if not _initialized:
-        return {"error": "RapidWright not initialized. Call initialize_rapidwright first."}
+    _init_err = _ensure_rapidwright_initialized()
+    if _init_err is not None:
+        return _init_err
     
     try:
         from com.xilinx.rapidwright.device import Device, SiteTypeEnum
