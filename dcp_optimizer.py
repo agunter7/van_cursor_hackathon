@@ -987,7 +987,7 @@ class DCPOptimizer(DCPOptimizerBase):
                 logger.error(f"Last message: {self.messages[-1]}")
             raise
     
-    async def optimize(self, input_dcp: Path, output_dcp: Path,  prompt_file: str = "SYSTEM_PROMPT.txt") -> bool:
+    async def optimize(self, input_dcp: Path, output_dcp: Path,  prompt_file: str = "SYSTEM_PROMPT.TXT") -> bool:
         """Run the optimization workflow."""
         # Start timing the optimization process
         self.start_time = time.time()
@@ -2111,8 +2111,8 @@ Examples:
     parser.add_argument(
     "--prompt",
     type=str,
-    default="SYSTEM_PROMPT.txt",
-    help="Prompt file name in PROMPTS/ (default: SYSTEM_PROMPT.txt)"
+    default="SYSTEM_PROMPT.TXT",
+    help="Prompt file name in PROMPTS/ (default: SYSTEM_PROMPT.TXT)"
     )
     
     args = parser.parse_args()
