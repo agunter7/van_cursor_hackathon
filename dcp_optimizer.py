@@ -902,6 +902,7 @@ class DCPOptimizer(DCPOptimizerBase):
             # Request usage accounting from OpenRouter
             response = self.openai.chat.completions.create(
                 model=self.model,
+                temperature=0.0,
                 messages=self.messages,
                 tools=self.tools,
                 tool_choice="auto",
