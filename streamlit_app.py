@@ -52,6 +52,16 @@ def build_command(
     return cmd
 
 
+def _timing_section(log: str) -> str:
+    """Use the final summary block so we do not pick numbers from mid-run logs."""
+    best_pos = -1
+    for mk in ("TIMING RESULTS:", "Timing Results:"):
+        p = log.rfind(mk)
+        if p > best_pos:
+            best_pos = p
+    return log[best_pos:] if best_pos >= 0 else log
+
+
 def parse_run_summary(log: str) -> dict:
     """Extract paths, timing, and outcome from optimizer stdout."""
     d: dict = {
@@ -83,12 +93,12 @@ def parse_run_summary(log: str) -> dict:
         if m:
             d[key] = m.group(1).strip()
 
-    def _float(m: Optional[re.Match]) -> Optional[float]:
+    def _float(m: Optional[re.Match], group: int = 1) -> Optional[float]:
         if not m:
             return None
         try:
-            return float(m.group(1))
-        except ValueError:
+            return float(m.group(group))
+        except (ValueError, IndexError, TypeError):
             return None
 
     m = re.search(r"\*\*\* WNS Change:\s*([+-]?\d+\.?\d*)\s*ns\s*\*\*\*", log)
@@ -99,40 +109,94 @@ def parse_run_summary(log: str) -> dict:
     if m:
         d["fmax_change"] = _float(m)
 
-    # Timing Results block (test summary and similar)
-    m = re.search(r"Initial WNS:\s*([+-]?\d+\.?\d*)\s*ns", log)
-    if m:
-        d["initial_wns"] = _float(m)
-    m = re.search(r"Final WNS:\s+([+-]?\d+\.?\d*)\s*ns", log)
-    if m:
-        d["final_wns"] = _float(m)
+    timing = _timing_section(log)
 
-    m = re.search(r"Initial fmax:\s*([+-]?\d+\.?\d*)\s*MHz", log)
+    m = re.search(
+        r"Initial WNS:\s*([+-]?\d+\.?\d*)\s*ns(?:\s*\(fmax:\s*([+-]?\d+\.?\d*)\s*MHz\))?",
+        timing,
+    )
     if m:
-        d["initial_fmax"] = _float(m)
-    m = re.search(r"Final fmax:\s+([+-]?\d+\.?\d*)\s*MHz", log)
-    if m:
-        d["final_fmax"] = _float(m)
+        d["initial_wns"] = _float(m, 1)
+        if m.lastindex and m.group(2) is not None:
+            d["initial_fmax"] = _float(m, 2)
 
-    m = re.search(r"WNS Change:\s+([+-]?\d+\.?\d*)\s*ns", log)
+    m = re.search(
+        r"Best WNS:\s*([+-]?\d+\.?\d*)\s*ns(?:\s*\(fmax:\s*([+-]?\d+\.?\d*)\s*MHz\))?",
+        timing,
+    )
+    if m:
+        d["final_wns"] = _float(m, 1)
+        if m.lastindex and m.group(2) is not None:
+            d["final_fmax"] = _float(m, 2)
+
+    m = re.search(
+        r"Final WNS:\s*([+-]?\d+\.?\d*)\s*ns(?:\s*\(fmax:\s*([+-]?\d+\.?\d*)\s*MHz\))?",
+        timing,
+    )
+    if m:
+        d["final_wns"] = _float(m, 1)
+        if m.lastindex and m.group(2) is not None:
+            d["final_fmax"] = _float(m, 2)
+
+    if d["initial_fmax"] is None:
+        m = re.search(r"Initial fmax:\s*([+-]?\d+\.?\d*)\s*MHz", timing, re.IGNORECASE)
+        if m:
+            d["initial_fmax"] = _float(m)
+    if d["final_fmax"] is None:
+        m = re.search(r"Final fmax:\s*([+-]?\d+\.?\d*)\s*MHz", timing, re.IGNORECASE)
+        if m:
+            d["final_fmax"] = _float(m)
+
+    m = re.search(
+        r"WNS Improvement:\s*([+-]?\d+\.?\d*)\s*ns(?:\s*\(fmax:\s*([+-]?\d+\.?\d*)\s*MHz\))?",
+        timing,
+    )
+    if m and d["wns_change"] is None:
+        d["wns_change"] = _float(m, 1)
+        if m.lastindex and m.group(2) is not None and d["fmax_change"] is None:
+            d["fmax_change"] = _float(m, 2)
+
+    m = re.search(r"WNS Change:\s*([+-]?\d+\.?\d*)\s*ns", timing)
     if m and d["wns_change"] is None:
         d["wns_change"] = _float(m)
 
-    m = re.search(r"Fmax Change:\s*([+-]?\d+\.?\d*)\s*MHz", log)
+    m = re.search(r"Fmax Change:\s*([+-]?\d+\.?\d*)\s*MHz", timing, re.IGNORECASE)
     if m and d["fmax_change"] is None:
         d["fmax_change"] = _float(m)
 
-    m = re.search(r"Clock period:\s*([+-]?\d+\.?\d*)\s*ns\s*\(target fmax:\s*([+-]?\d+\.?\d*)\s*MHz\)", log)
+    m = re.search(
+        r"Clock period:\s*([+-]?\d+\.?\d*)\s*ns\s*\(target:\s*([+-]?\d+\.?\d*)\s*MHz\)",
+        timing,
+        re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(
+            r"Clock period:\s*([+-]?\d+\.?\d*)\s*ns\s*\(target fmax:\s*([+-]?\d+\.?\d*)\s*MHz\)",
+            timing,
+            re.IGNORECASE,
+        )
     if m:
-        d["clock_period_ns"] = _float(m)
-        try:
-            d["target_fmax"] = float(m.group(2))
-        except ValueError:
-            pass
+        d["clock_period_ns"] = _float(m, 1)
+        d["target_fmax"] = _float(m, 2)
 
-    m = re.search(r"Total runtime:\s*([+-]?\d+\.?\d*)\s*seconds", log)
+    m = re.search(r"TOTAL RUNTIME:\s*([+-]?\d+\.?\d*)\s*seconds?", log, re.IGNORECASE)
+    if not m:
+        m = re.search(r"Total runtime:\s*([+-]?\d+\.?\d*)\s*seconds?", log, re.IGNORECASE)
     if m:
         d["total_runtime_s"] = _float(m)
+
+    if (
+        d["wns_change"] is None
+        and d["initial_wns"] is not None
+        and d["final_wns"] is not None
+    ):
+        d["wns_change"] = d["final_wns"] - d["initial_wns"]
+    if (
+        d["fmax_change"] is None
+        and d["initial_fmax"] is not None
+        and d["final_fmax"] is not None
+    ):
+        d["fmax_change"] = d["final_fmax"] - d["initial_fmax"]
 
     if re.search(r"✓ Optimization completed successfully", log):
         d["success"] = True
