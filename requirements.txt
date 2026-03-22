@@ -11,3 +11,6 @@ rapidwright>=2025.2.1
 
 # Vivado MCP dependencies (pexpect for process control)
 pexpect>=4.8.0
+
+# Demo UI (optional)
+streamlit>=1.28.0
